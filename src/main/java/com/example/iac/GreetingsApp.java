@@ -8,7 +8,7 @@ public class GreetingsApp {
 
 static class Greetings extends Construct{
 
-    Greetings(Construct scope, String id, String appName){
+    Greetings(Construct scope, String id, String appName, String domainName){
         super(scope, id);
 
         // Containers/Services/Data Plane
@@ -20,22 +20,21 @@ static class Greetings extends Construct{
         // Network/Infrastructure/ControlPlane
         ControlPlane cp =   new ControlPlane(this, appName+"-cp", ControlPlane.ControlPlaneProps.builder()
                                             .appName(appName)
-                                            .domain("example.com")
-                                            .imageMorning(dp.getMorningImageAsset())
-                                            .imageAfternoon(dp.getAfternoonImageAsset())
+                                            .domain(domainName)
+                                            .imageMorning(dp.getV1Asset())
+                                            .imageAfternoon(dp.getV2Asset())
                                             .imageUI(dp.getUiImageAsset())
                                             .terminationProtection(Boolean.FALSE)
                                             .build());        
         // Monitoring...
         cp.addDependency(dp);
-
     }
 }
 
     public static void main(String args[]){
 
         App greetingsApp = new App();
-        new Greetings(greetingsApp, "greetings", "greetings");
+        new Greetings(greetingsApp, "greetings", "greetings", "example.com");
         greetingsApp.synth();
     }
 }

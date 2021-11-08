@@ -15,48 +15,13 @@ import software.amazon.awscdk.services.ecr.assets.DockerImageAsset;
 
 public class DataPlane extends Stack {
 
-    private DockerImageAsset morningImageAsset  =   null;
-    private DockerImageAsset afternoonImageAsset=   null;
+    private DockerImageAsset v1Asset  =   null;
+    private DockerImageAsset v2Asset=   null;
     private DockerImageAsset uiImageAsset       =   null;
     
     DataPlane(Construct scope, String id, DataPlaneProps props){
 
         super(scope, id, props);
-
-        final String APP_NAME   =   props.getAppName();
-        final String ACCOUNT    =   props.getEnv().getAccount();
-        final String REGION     =   props.getEnv().getRegion();
-        Util    util            =   new Util();
-
-        //Create the ECR using the CLI because I'm uploading the containers in ECR using the command line also (ECR deployment exists as a project in typescript)
-
-        
-        //Repository ecr  =   Repository.Builder.create(this, APP_NAME+"-repo").imageScanOnPush(Boolean.FALSE).repositoryName(APP_NAME).build();
-
-        //get ECR Password and create the settings.xml with the temporary password
-        // String ecrPassword = DataPlane.ecrPassword(REGION);
-        // String settingsTemplate =   util.getFile("settings-template.xml");
-        // String settings =   MessageFormat.format(settingsTemplate, ACCOUNT, REGION, ecrPassword);
-        // try{
-        //     Files.deleteIfExists( (new File("settings.xml")).toPath() );
-        //     PrintWriter writer = new PrintWriter("settings.xml");
-        //     writer.println(settings);
-        //     writer.close();
-        // }catch(Exception e){
-        //     throw new RuntimeException (e);
-        // }
-
-        // //Compile all the three projects using the maven deploy command and Runtime.exec.
-        // if( !deployMorning() ){ 
-        //     throw new RuntimeException ("Could not deploy the morning service");
-        // }
-        // if( !deployAfternoon() ){
-        //     throw new RuntimeException ("Could not deploy the afternoon service");
-        // }
-
-
-        //Add the envoy and x-ray containers into this repository.
-
 
         //Create the 3 containers, one for each project: Gateway (Envoy only), Morning and Afternoon Services.  
         DockerImageAsset morning = DockerImageAsset.Builder
@@ -74,37 +39,26 @@ public class DataPlane extends Stack {
                         .directory("./")
                         .build();  
 
-        this.morningImageAsset  =   morning;
-        this.afternoonImageAsset    =   afternoon;
+        this.v1Asset  =   morning;
+        this.v2Asset    =   afternoon;
         this.uiImageAsset   =   ui;
-
-        // System.out.println("Morning URI: "+morning.getImageUri()+", Repository: "+afternoon.getRepository().getRepositoryName());
-        // System.out.println("Afternoon URI: "+afternoon.getImageUri()+", Repository: "+afternoon.getRepository().getRepositoryName());
-        // System.out.println("UI URI: "+ui.getImageUri()+", Repository: "+ui.getRepository().getRepositoryName());
-
-        // Repository ecrRepo  =   Repository.Builder.create(this, APP_NAME+"-repo").repositoryName(APP_NAME+"-repo").build();
-        
-
-        // se eu for com o DockerImageAsset eu consigo referenciar a imagem via ContainerImage.fromDockerImageAseet
-        // fazer o deploy dos containers e das imagens usando o mecanismo comentado acima. 
-        // tem que comentar o último plugin dos 3 pom.xml
     }
 
 
-    public DockerImageAsset getMorningImageAsset() {
-        return this.morningImageAsset;
+    public DockerImageAsset getV1Asset() {
+        return this.v1Asset;
     }
 
-    public void setMorningImageAsset(DockerImageAsset morningImageAsset) {
-        this.morningImageAsset = morningImageAsset;
+    public void setV1Asset(DockerImageAsset v1Asset) {
+        this.v1Asset = v1Asset;
     }
 
-    public DockerImageAsset getAfternoonImageAsset() {
-        return this.afternoonImageAsset;
+    public DockerImageAsset getV2Asset() {
+        return this.v2Asset;
     }
 
-    public void setAfternoonImageAsset(DockerImageAsset afternoonImageAsset) {
-        this.afternoonImageAsset = afternoonImageAsset;
+    public void setV2Asset(DockerImageAsset v2Asset) {
+        this.v2Asset = v2Asset;
     }
 
     public DockerImageAsset getUiImageAsset() {

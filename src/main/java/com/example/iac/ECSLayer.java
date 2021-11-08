@@ -56,6 +56,7 @@ public class ECSLayer extends Construct {
     private FargateService v1Fargate = null;
     private FargateService v2Fargate = null;
     private FargateService uiFargate = null;
+    private FargateService gwFargate = null;
 
     public ECSLayer(Construct scope, String id, final ControlPlaneProps props ){
 
@@ -64,6 +65,7 @@ public class ECSLayer extends Construct {
         final String SVC_A_NAME =   props.getAppName()+"-svc";
         final String SVC_B_NAME =   props.getAppName()+"-afternoon";
         final String SVC_UI_NAME=   props.getAppName()+"-ui";
+        final String SVC_GW_NAME=   props.getAppName()+"-gw";
         this.routerService         =   SVC_A_NAME+"."+props.getDomainName();
         
         if( props.getVpc() == null ){
@@ -111,9 +113,13 @@ public class ECSLayer extends Construct {
             ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy")
         )).build();
 
-        FargateService  v1Fargate      =   createFargateService( props, props.getV1ImageAsset(), SVC_A_NAME, namespace, taskRole, executionRole);
-        FargateService  v2Fargate    =   createFargateService( props, props.getV2ImageAsset(), SVC_B_NAME, namespace, taskRole, executionRole);
-        FargateService  uiFargate   =   createFargateService( props, props.getImageUIAsset(), SVC_UI_NAME, namespace, taskRole, executionRole);
+        FargateService  v1Fargate   =   createFargateService( Boolean.FALSE, props, props.getV1ImageAsset(), SVC_A_NAME, namespace, taskRole, executionRole);
+        FargateService  v2Fargate   =   createFargateService( Boolean.FALSE, props, props.getV2ImageAsset(), SVC_B_NAME, namespace, taskRole, executionRole);
+        FargateService  uiFargate   =   null;
+        if( props.getImageUIAsset()!= null ){
+           uiFargate =  createFargateService( Boolean.FALSE, props, props.getImageUIAsset(), SVC_UI_NAME, namespace, taskRole, executionRole);
+        }
+        FargateService  gwFargate   =   createFargateService( Boolean.TRUE, props, null, SVC_GW_NAME, namespace, taskRole, executionRole);
 
         props.getV1ImageAsset().getRepository().grantPull(v1Fargate.getTaskDefinition().obtainExecutionRole());
         props.getV2ImageAsset().getRepository().grantPull(v2Fargate.getTaskDefinition().obtainExecutionRole());
@@ -125,7 +131,7 @@ public class ECSLayer extends Construct {
     }
 
 
-    private FargateService createFargateService( ControlPlane.ControlPlaneProps props, DockerImageAsset appContainer, String serviceName, INamespace namespace, Role taskRole, Role executionRole ){
+    private FargateService createFargateService(Boolean IS_GATEWAY, ControlPlane.ControlPlaneProps props, DockerImageAsset appContainer, String serviceName, INamespace namespace, Role taskRole, Role executionRole ){
 
 
         SecurityGroup sg    =   SecurityGroup.Builder.create(this, serviceName+"-sg").vpc(props.getCluster().getVpc()).allowAllOutbound(Boolean.TRUE).build();
@@ -145,11 +151,11 @@ public class ECSLayer extends Construct {
             .dnsRecordType(DnsRecordType.A)
             .failureThreshold(5)
             .dnsTtl(Duration.seconds(60)).build())
-        .taskDefinition(createECSTask(props, appContainer, new HashMap<String,String>(), serviceName, taskRole, executionRole))
+        .taskDefinition(createECSTask(IS_GATEWAY, props, appContainer, new HashMap<String,String>(), serviceName, taskRole, executionRole))
         .build();
     }
 
-    private TaskDefinition createECSTask(ControlPlaneProps props, DockerImageAsset appContainer, Map<String, String> env, String serviceName, Role taskRole, Role executionRole){
+    private TaskDefinition createECSTask(final boolean IS_GATEWAY, ControlPlaneProps props, DockerImageAsset appContainer, Map<String, String> env, String serviceName, Role taskRole, Role executionRole){
 
         if( serviceName.contains("ui") ){
             System.out.println("UI is acessing the backend service at "+routerService+":"+ROUTER_SVC_PORT);
@@ -187,6 +193,14 @@ public class ECSLayer extends Construct {
         }
 
         //adding envoy
+        String resourceArn = null;
+        if( IS_GATEWAY ){
+            resourceArn = "arn:aws:appmesh:"+props.getEnv().getRegion()+":"+props.getEnv().getAccount()+":mesh/"+props.getAppName()+"/virtualGateway/"+serviceName;
+        } else {
+            resourceArn = "arn:aws:appmesh:"+props.getEnv().getRegion()+":"+props.getEnv().getAccount()+":mesh/"+props.getAppName()+"/virtualNode/"+serviceName+"-vn";
+        }
+        final String arn = resourceArn;
+        
         ContainerDefinition envoyContainer  =   taskDef.addContainer(serviceName+"-envoy", ContainerDefinitionOptions.builder()
         .containerName("envoy")
         .image(ContainerImage.fromRegistry("public.ecr.aws/appmesh/aws-appmesh-envoy:v1.19.1.1-prod"))
@@ -195,8 +209,8 @@ public class ECSLayer extends Construct {
         .cpu(512)
         .memoryLimitMiB(512)
         .user("1337")
-        .environment(new HashMap<String, String>() {{         
-            put("APPMESH_RESOURCE_ARN", "arn:aws:appmesh:"+props.getEnv().getRegion()+":"+props.getEnv().getAccount()+":mesh/"+props.getAppName()+"/virtualNode/"+serviceName+"-vn");
+        .environment(new HashMap<String, String>() {{   
+            put("APPMESH_RESOURCE_ARN", arn);
             put("REGION", props.getEnv().getRegion());
             put("ENVOY_LOG_LEVEL", "debug");
             put("ENABLE_ENVOY_XRAY_TRACING", "1");
@@ -231,24 +245,25 @@ public class ECSLayer extends Construct {
             .streamPrefix(serviceName).build()))
         .build());
 
-        //adding application container
-        ContainerDefinition app = taskDef.addContainer( serviceName+"-app", ContainerDefinitionOptions.builder()
-        .containerName(serviceName)
-        .memoryReservationMiB(256)
-        .memoryLimitMiB(512)
-        .image(ContainerImage.fromDockerImageAsset(appContainer))
-        .essential(Boolean.TRUE)
-        .healthCheck(software.amazon.awscdk.services.ecs.HealthCheck.builder().command(Arrays.asList("CMD-SHELL", "curl -s http://localhost:8080/Luiz | grep name")).interval(Duration.seconds(5)).timeout(Duration.seconds(2)).retries(3).startPeriod(Duration.seconds(10)).build())
-        .portMappings(Arrays.asList(
-            PortMapping.builder().containerPort(8080).hostPort(8080).protocol(Protocol.TCP).build()))
-        .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
-            .logGroup(logGroup)
-            .streamPrefix(serviceName+"/app").build()))            
-        .environment(env)
-        .build());
+        if( appContainer != null ){
+            //adding application container
+            ContainerDefinition app = taskDef.addContainer( serviceName+"-app", ContainerDefinitionOptions.builder()
+            .containerName(serviceName)
+            .memoryReservationMiB(256)
+            .memoryLimitMiB(512)
+            .image(ContainerImage.fromDockerImageAsset(appContainer))
+            .essential(Boolean.TRUE)
+            .healthCheck(software.amazon.awscdk.services.ecs.HealthCheck.builder().command(Arrays.asList("CMD-SHELL", "curl -s http://localhost:8080/Luiz | grep name")).interval(Duration.seconds(5)).timeout(Duration.seconds(2)).retries(3).startPeriod(Duration.seconds(10)).build())
+            .portMappings(Arrays.asList(
+                PortMapping.builder().containerPort(8080).hostPort(8080).protocol(Protocol.TCP).build()))
+            .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
+                .logGroup(logGroup)
+                .streamPrefix(serviceName+"/app").build()))            
+            .environment(env)
+            .build());
 
-        app.addContainerDependencies(ContainerDependency.builder().condition(ContainerDependencyCondition.HEALTHY).container(envoyContainer).build());
-        
+            app.addContainerDependencies(ContainerDependency.builder().condition(ContainerDependencyCondition.HEALTHY).container(envoyContainer).build());
+        }
         return taskDef;
     }    
 
