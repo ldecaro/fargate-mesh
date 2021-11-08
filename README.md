@@ -7,6 +7,6 @@ Ideally, each of your microservices could be built using a similar approach. Thi
 
 `# cdk deploy --all --require-approval never`
 
-`# wget http://greetings-ui.example.com`
+`# wget http://greetings-ui.example.com:8080/Visitor`
 
 As a convenience you could add this as a product on service catalog. To accomplish this, you should execute the stack named `ServiceCatalog` (not ready yet)
