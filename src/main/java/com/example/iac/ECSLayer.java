@@ -157,32 +157,51 @@ public class ECSLayer extends Construct {
 
     private TaskDefinition createECSTask(final boolean IS_GATEWAY, ControlPlaneProps props, DockerImageAsset appContainer, Map<String, String> env, String serviceName, Role taskRole, Role executionRole){
 
-        if( serviceName.contains("ui") ){
+        TaskDefinition taskDef =    null;
+        if( serviceName.endsWith("ui") ){
             System.out.println("UI is acessing the backend service at "+routerService+":"+ROUTER_SVC_PORT);
             env.put("GREETING_SERVICE", routerService+":"+ROUTER_SVC_PORT);
             env.put("GREETING_SERVICE_PROTO", "http");
+
+        }
+        
+        if( IS_GATEWAY ){
+            taskDef =   TaskDefinition.Builder.create(this, serviceName+"-ecsTaskDef")
+            .taskRole(taskRole)
+            .executionRole(executionRole)
+            .networkMode(NetworkMode.AWS_VPC)
+            .cpu("1024")
+            .memoryMiB("2048")
+            .family(serviceName)
+            .compatibility(Compatibility.FARGATE)
+            .build();
+        }else{
+           taskDef =    TaskDefinition.Builder.create(this, serviceName+"-ecsTaskDef")
+            .taskRole(taskRole)
+            .executionRole(executionRole)
+            .networkMode(NetworkMode.AWS_VPC)
+            .cpu("1024")
+            .memoryMiB("2048")
+            .family(serviceName)
+            .compatibility(Compatibility.FARGATE)
+            .proxyConfiguration(AppMeshProxyConfiguration.Builder.create()
+                .containerName("envoy")
+                .properties(AppMeshProxyConfigurationProps.builder()
+                    .appPorts(Arrays.asList(8080))
+                    .proxyIngressPort(15000)
+                    .proxyEgressPort(15001)
+                    .ignoredUid(1337)
+                    .egressIgnoredIPs(Arrays.asList("169.254.170.2", "169.254.169.254"))
+                    .egressIgnoredPorts(Arrays.asList(443))
+                    .build())
+                .build())
+            .build();
         }
         //if appContainer == null create only a task for the envoy proxy, used to implement the appmesh gateway
-        TaskDefinition taskDef =    TaskDefinition.Builder.create(this, serviceName+"-ecsTaskDef")
-        .taskRole(taskRole)
-        .executionRole(executionRole)
-        .networkMode(NetworkMode.AWS_VPC)
-        .cpu("1024")
-        .memoryMiB("2048")
-        .family(serviceName)
-        .compatibility(Compatibility.FARGATE)
-        .proxyConfiguration(AppMeshProxyConfiguration.Builder.create()
-            .containerName("envoy")
-            .properties(AppMeshProxyConfigurationProps.builder()
-                .appPorts(Arrays.asList(8080))
-                .proxyIngressPort(15000)
-                .proxyEgressPort(15001)
-                .ignoredUid(1337)
-                .egressIgnoredIPs(Arrays.asList("169.254.170.2", "169.254.169.254"))
-                .egressIgnoredPorts(Arrays.asList(443))
-                .build())
-            .build())
-        .build();
+        
+        
+
+        
 
         ILogGroup logGroup=  LogGroup.fromLogGroupName(this, props.getAppName()+"-"+serviceName+"-logGroup", props.getAppName());
         if( logGroup == null ){
@@ -225,10 +244,15 @@ public class ECSLayer extends Construct {
         }}).build())
         .healthCheck(software.amazon.awscdk.services.ecs.HealthCheck.builder().command(Arrays.asList("CMD-SHELL", "curl -s http://localhost:9901/server_info | grep state | grep -q LIVE")).interval(Duration.seconds(5)).timeout(Duration.seconds(2)).retries(3).startPeriod(Duration.seconds(10)).build())
         .portMappings(Arrays.asList(
-            PortMapping.builder().containerPort(15000).hostPort(15000).protocol(Protocol.TCP).build(), 
             PortMapping.builder().containerPort(15001).hostPort(15001).protocol(Protocol.TCP).build(), 
             PortMapping.builder().containerPort(9901).hostPort(9901).protocol(Protocol.TCP).build()))                
         .build());
+
+        if( IS_GATEWAY ){
+            envoyContainer.addPortMappings(PortMapping.builder().containerPort(8080).hostPort(8080).protocol(Protocol.TCP).build()); 
+        }else{
+            envoyContainer.addPortMappings(PortMapping.builder().containerPort(15000).hostPort(15000).protocol(Protocol.TCP).build());
+        }
 
         envoyContainer.addUlimits(Ulimit.builder().hardLimit(15000).softLimit(15000).name(UlimitName.NOFILE).build());
 
