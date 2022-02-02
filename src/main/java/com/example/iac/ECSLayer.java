@@ -8,6 +8,7 @@ import com.example.iac.ControlPlane.ControlPlaneProps;
 
 import software.amazon.awscdk.core.Construct;
 import software.amazon.awscdk.core.Duration;
+import software.amazon.awscdk.core.RemovalPolicy;
 import software.amazon.awscdk.services.ec2.Peer;
 import software.amazon.awscdk.services.ec2.Port;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
@@ -113,13 +114,19 @@ public class ECSLayer extends Construct {
             ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy")
         )).build();
 
-        FargateService  v1Fargate   =   createFargateService( Boolean.FALSE, props, props.getV1ImageAsset(), SVC_A_NAME, namespace, taskRole, executionRole);
-        FargateService  v2Fargate   =   createFargateService( Boolean.FALSE, props, props.getV2ImageAsset(), SVC_B_NAME, namespace, taskRole, executionRole);
+        System.out.println("Creating log group..."+props.getAppName());
+        ILogGroup logGroup = LogGroup.Builder.create(this, props.getAppName()+"-logGroup")
+            .logGroupName(props.getAppName())
+            .retention(RetentionDays.ONE_MONTH)
+            .removalPolicy(RemovalPolicy.DESTROY)
+            .build();
+        FargateService  v1Fargate   =   createFargateService( Boolean.FALSE, props, props.getV1ImageAsset(), SVC_A_NAME, namespace, taskRole, executionRole, logGroup);
+        FargateService  v2Fargate   =   createFargateService( Boolean.FALSE, props, props.getV2ImageAsset(), SVC_B_NAME, namespace, taskRole, executionRole, logGroup);
         FargateService  uiFargate   =   null;
         if( props.getImageUIAsset()!= null ){
-           uiFargate =  createFargateService( Boolean.FALSE, props, props.getImageUIAsset(), SVC_UI_NAME, namespace, taskRole, executionRole);
+           uiFargate =  createFargateService( Boolean.FALSE, props, props.getImageUIAsset(), SVC_UI_NAME, namespace, taskRole, executionRole, logGroup);
         }
-        FargateService  gwFargate   =   createFargateService( Boolean.TRUE, props, null, SVC_GW_NAME, namespace, taskRole, executionRole);
+        FargateService  gwFargate   =   createFargateService( Boolean.TRUE, props, null, SVC_GW_NAME, namespace, taskRole, executionRole, logGroup);
 
         props.getV1ImageAsset().getRepository().grantPull(v1Fargate.getTaskDefinition().obtainExecutionRole());
         props.getV2ImageAsset().getRepository().grantPull(v2Fargate.getTaskDefinition().obtainExecutionRole());
@@ -131,7 +138,7 @@ public class ECSLayer extends Construct {
     }
 
 
-    private FargateService createFargateService(Boolean IS_GATEWAY, ControlPlane.ControlPlaneProps props, DockerImageAsset appContainer, String serviceName, INamespace namespace, Role taskRole, Role executionRole ){
+    private FargateService createFargateService(Boolean IS_GATEWAY, ControlPlane.ControlPlaneProps props, DockerImageAsset appContainer, String serviceName, INamespace namespace, Role taskRole, Role executionRole, ILogGroup logGroup ){
 
 
         SecurityGroup sg    =   SecurityGroup.Builder.create(this, serviceName+"-sg").vpc(props.getCluster().getVpc()).allowAllOutbound(Boolean.TRUE).build();
@@ -151,11 +158,11 @@ public class ECSLayer extends Construct {
             .dnsRecordType(DnsRecordType.A)
             .failureThreshold(5)
             .dnsTtl(Duration.seconds(60)).build())
-        .taskDefinition(createECSTask(IS_GATEWAY, props, appContainer, new HashMap<String,String>(), serviceName, taskRole, executionRole))
+        .taskDefinition(createECSTask(IS_GATEWAY, props, appContainer, new HashMap<String,String>(), serviceName, taskRole, executionRole, logGroup))
         .build();
     }
 
-    private TaskDefinition createECSTask(final boolean IS_GATEWAY, ControlPlaneProps props, DockerImageAsset appContainer, Map<String, String> env, String serviceName, Role taskRole, Role executionRole){
+    private TaskDefinition createECSTask(final boolean IS_GATEWAY, ControlPlaneProps props, DockerImageAsset appContainer, Map<String, String> env, String serviceName, Role taskRole, Role executionRole, ILogGroup logGroup){
 
         TaskDefinition taskDef =    null;
         if( serviceName.endsWith("ui") ){
@@ -197,20 +204,6 @@ public class ECSLayer extends Construct {
                 .build())
             .build();
         }
-        //if appContainer == null create only a task for the envoy proxy, used to implement the appmesh gateway
-        
-        
-
-        
-
-        ILogGroup logGroup=  LogGroup.fromLogGroupName(this, props.getAppName()+"-"+serviceName+"-logGroup", props.getAppName());
-        if( logGroup == null ){
-            System.out.println("Creating log group..."+props.getAppName());
-            logGroup    =   LogGroup.Builder.create(this, serviceName+"-logGroup").logGroupName(props.getAppName()).retention(RetentionDays.ONE_MONTH).build();
-        }else{
-            System.out.println("Reusing log group "+props.getAppName());
-        }
-
         //adding envoy
         String resourceArn = null;
         if( IS_GATEWAY ){
