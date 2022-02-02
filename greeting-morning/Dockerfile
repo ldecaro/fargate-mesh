@@ -1,4 +1,4 @@
-FROM amazoncorretto:8
+FROM public.ecr.aws/amazoncorretto/amazoncorretto:8
 RUN mkdir -p /u01/deploy
 WORKDIR /u01/deploy
 
